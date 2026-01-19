@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>rpg-world-mapper v4.8</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; display: flex; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 8px; z-index: 100; width: 280px; border: 1px solid #444; }
+        .view-container { width: 50vw; height: 100vh; position: relative; border-right: 1px solid #333; }
+        .label { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); color: #4fc3f7; background: rgba(0,0,0,0.6); padding: 8px 20px; border-radius: 20px; pointer-events: none; font-weight: bold; border: 1px solid #4fc3f7; text-transform: uppercase; }
+        input[type="file"] { width: 100%; margin-top: 10px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <h2 style="margin:0; font-size: 16px;">RPG WORLD MAPPER v4.8</h2>
+    <input type="file" id="fileInput" accept="image/*">
+    <div style="font-size: 11px; color: #888; margin-top: 10px;">鏡写しと上下逆転を完全に解消しました。</div>
+</div>
+
+<div id="view1" class="view-container"><div class="label">Sphere</div></div>
+<div id="view2" class="view-container"><div class="label">Torus</div></div>
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const SPHERE_RADIUS = 5;
+    const TORUS_MINOR_RADIUS = 1.6; 
+    const TORUS_MAJOR_RADIUS = SPHERE_RADIUS - TORUS_MINOR_RADIUS;
+
+    let views = [];
+    let lastUV = { u: 0.5, v: 0.5 };
+    let commonTexture;
+    const textureLoader = new THREE.TextureLoader();
+    const earthMapUrl = './earth.jpg';
+
+    function init() {
+        commonTexture = textureLoader.load(earthMapUrl, (tex) => {
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            views.forEach(v => v.mesh.material.map = tex);
+        });
+
+        setupView('view1', false); 
+        setupView('view2', true);  
+        
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const tex = new THREE.Texture(img);
+                        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+                        tex.needsUpdate = true;
+                        commonTexture = tex;
+                        views.forEach(v => v.mesh.material.map = tex);
+                    };
+                    img.src = ev.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+        animate();
+    }
+
+    function setupView(containerId, isTorus) {
+        const container = document.getElementById(containerId);
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(50, (window.innerWidth/2) / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 0, 15);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth / 2, window.innerHeight);
+        container.appendChild(renderer.domElement);
+        scene.add(new THREE.AmbientLight(0xffffff, 2.0));
+
+        const geo = isTorus 
+            ? new THREE.TorusGeometry(TORUS_MAJOR_RADIUS, TORUS_MINOR_RADIUS, 128, 128) 
+            : new THREE.SphereGeometry(SPHERE_RADIUS, 128, 128);
+
+        const uvAttr = geo.attributes.uv;
+        for (let i = 0; i < uvAttr.count; i++) {
+            let u = uvAttr.getX(i);
+            let v = uvAttr.getY(i);
+            if (isTorus) {
+                // v軸（南北）を反転させ、かつ0.5オフセットして赤道を外側へ
+                v = 1 - ((v + 0.5) % 1.0); 
+            }
+            uvAttr.setXY(i, u, v);
+        }
+
+        const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: commonTexture, side: THREE.DoubleSide }));
+        
+        if (isTorus) {
+            mesh.rotation.x = Math.PI / 2;
+            mesh.rotation.z = -Math.PI / 2;
+        } else {
+            // 球体の鏡写し（Mirror）を解消するためにX軸を反転
+            mesh.scale.x = -1;
+            mesh.rotation.y = Math.PI / 2;
+        }
+        scene.add(mesh);
+
+        const pin = new THREE.Mesh(
+            new THREE.ConeGeometry(0.12, 0.5, 12),
+            new THREE.MeshPhongMaterial({ color: 0xff0000 })
+        );
+        pin.rotation.x = Math.PI;
+        scene.add(pin);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        const view = { scene, camera, renderer, mesh, pin, isTorus, controls };
+        views.push(view);
+
+        renderer.domElement.addEventListener('mousedown', (e) => onMapClick(e, view));
+    }
+
+    function onMapClick(event, activeView) {
+        const rect = activeView.renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+            ((event.clientX - rect.left) / rect.width) * 2 - 1,
+            -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, activeView.camera);
+        const intersects = raycaster.intersectObject(activeView.mesh);
+
+        if (intersects.length > 0 && intersects[0].uv) {
+            lastUV = { u: intersects[0].uv.x, v: intersects[0].uv.y };
+            updateAllPins();
+        }
+    }
+
+    function updateAllPins() {
+        views.forEach(v => {
+            const { u, v: v_coord } = lastUV;
+
+            if (!v.isTorus) {
+                // 球体：Scale.x = -1 に合わせ、thetaの方向を調整
+                const theta = (u * Math.PI * 2) - Math.PI / 2;
+                const phi = (1 - v_coord) * Math.PI; 
+                const r = SPHERE_RADIUS + 0.05;
+                v.pin.position.set(
+                    r * Math.sin(phi) * Math.cos(theta),
+                    r * Math.cos(phi),
+                    r * Math.sin(phi) * Math.sin(theta)
+                );
+            } else {
+                // ドーナツ：修正されたv軸ロジックに同期
+                const theta = u * Math.PI * 2 - Math.PI / 2;
+                // v=1(北) -> phi = -PI/2 (穴の上縁)
+                // v=0(南) -> phi = PI/2 (穴の下縁)
+                const phi = (0.5 - v_coord) * Math.PI * 2; 
+                const R = TORUS_MAJOR_RADIUS;
+                const r = TORUS_MINOR_RADIUS + 0.05;
+                
+                v.pin.position.set(
+                    (R + r * Math.cos(phi)) * Math.cos(theta),
+                    r * Math.sin(phi),
+                    (R + r * Math.cos(phi)) * Math.sin(theta)
+                );
+            }
+            v.pin.lookAt(0,0,0);
+        });
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        views.forEach((v, idx) => {
+            const other = views[1 - idx];
+            if (v.controls.enabled) {
+                other.camera.position.copy(v.camera.position);
+                other.camera.quaternion.copy(v.camera.quaternion);
+                other.controls.target.copy(v.controls.target);
+                other.controls.update();
+            }
+            v.renderer.render(v.scene, v.camera);
+        });
+    }
+
+    init();
+    window.addEventListener('resize', () => {
+        views.forEach(v => {
+            v.camera.aspect = (window.innerWidth/2) / window.innerHeight;
+            v.camera.updateProjectionMatrix();
+            v.renderer.setSize(window.innerWidth / 2, window.innerHeight);
+        });
+    });
+</script>
+</body>
+</html>
