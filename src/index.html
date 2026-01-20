@@ -2,21 +2,34 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>rpg-world-mapper v5.4</title>
+    <title>rpg-world-mapper v5.4.2</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; display: flex; }
         #ui { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 8px; z-index: 100; width: 300px; border: 1px solid #444; }
         .view-container { width: 50vw; height: 100vh; position: relative; border-right: 1px solid #333; }
         .label { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); color: #4fc3f7; background: rgba(0,0,0,0.6); padding: 8px 20px; border-radius: 20px; pointer-events: none; font-weight: bold; border: 1px solid #4fc3f7; text-transform: uppercase; }
-        input[type="file"] { width: 100%; margin-top: 10px; cursor: pointer; color: #ccc; }
+        
+        .control-group { margin-top: 15px; display: flex; flex-direction: column; gap: 10px; }
+        input[type="file"] { width: 100%; cursor: pointer; color: #ccc; font-size: 12px; }
+        
+        button { 
+            background: #333; color: white; border: 1px solid #666; padding: 6px 12px; 
+            border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;
+        }
+        button:hover { background: #444; border-color: #4fc3f7; }
+        button:active { background: #222; }
+
         .instruction { font-size: 11px; color: #aaa; margin-top: 10px; line-height: 1.5; white-space: pre-wrap; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <h2 style="margin:0; font-size: 16px;">RPG WORLD MAPPER v5.4</h2>
-    <input type="file" id="fileInput" accept="image/*">
+    <h2 style="margin:0; font-size: 16px;">RPG WORLD MAPPER v5.4.2</h2>
+    <div class="control-group">
+        <input type="file" id="fileInput" accept="image/*">
+        <button id="resetMapBtn">標準マップに戻す</button>
+    </div>
     <div class="instruction">もし地球の南北が古のJRPGの様につながっていたら。もしくは古のJRPGが地球と同じ球体だったら。</div>
 </div>
 
@@ -39,19 +52,17 @@
     const SPHERE_RADIUS = 5;
     const TORUS_MINOR_RADIUS = 1.6; 
     const TORUS_MAJOR_RADIUS = SPHERE_RADIUS - TORUS_MINOR_RADIUS;
+    const DEFAULT_MAP_URL = './earth.jpg';
 
     let views = [];
     let lastUV = { u: 0.5, v: 0.5 };
     let commonTexture;
     let activeController = null;
     const textureLoader = new THREE.TextureLoader();
-    const earthMapUrl = './earth.jpg';
 
     function init() {
-        commonTexture = textureLoader.load(earthMapUrl, (tex) => {
-            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-            views.forEach(v => v.mesh.material.map = tex);
-        });
+        // v5.4の初期ロード処理を関数化して再利用可能に
+        loadMap(DEFAULT_MAP_URL);
 
         setupView('view1', false); 
         setupView('view2', true);  
@@ -74,7 +85,26 @@
                 reader.readAsDataURL(file);
             }
         });
+
+        // リセットボタンの追加
+        document.getElementById('resetMapBtn').addEventListener('click', () => {
+            loadMap(DEFAULT_MAP_URL);
+            document.getElementById('fileInput').value = ""; 
+        });
+
         animate();
+    }
+
+    // v5.4準拠のテクスチャ適用関数
+    function loadMap(url) {
+        textureLoader.load(url, (tex) => {
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            commonTexture = tex;
+            views.forEach(v => {
+                v.mesh.material.map = tex;
+                v.mesh.material.needsUpdate = true;
+            });
+        });
     }
 
     function setupView(containerId, isTorus) {
@@ -88,16 +118,17 @@
         container.appendChild(renderer.domElement);
         scene.add(new THREE.AmbientLight(0xffffff, 2.0));
 
+        // v5.4 ジオメトリ作成
         const geo = isTorus 
             ? new THREE.TorusGeometry(TORUS_MAJOR_RADIUS, TORUS_MINOR_RADIUS, 128, 128) 
             : new THREE.SphereGeometry(SPHERE_RADIUS, 128, 128);
 
+        // v5.4 UVロジック（そのまま）
         const uvAttr = geo.attributes.uv;
         for (let i = 0; i < uvAttr.count; i++) {
             let u = uvAttr.getX(i);
             let v = uvAttr.getY(i);
             if (isTorus) {
-                // 表示上の南北を正しく。v=1を上（穴の内側上）に。
                 v = 1 - ((v + 0.5) % 1.0); 
             }
             uvAttr.setXY(i, u, v);
@@ -105,6 +136,7 @@
 
         const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: commonTexture, side: THREE.DoubleSide }));
         
+        // v5.4 配置・反転ロジック（そのまま）
         if (isTorus) {
             mesh.rotation.x = Math.PI / 2;
             mesh.rotation.z = -Math.PI / 2;
@@ -149,10 +181,11 @@
     function updateAllPins() {
         views.forEach(v => {
             const { u, v: v_coord } = lastUV;
+            
+            // v5.4 同期ロジック（そのまま）
             const theta = (u * Math.PI * 2) - Math.PI / 2;
 
             if (!v.isTorus) {
-                // 球体：v=1(北)がy正方向
                 const phi = (1 - v_coord) * Math.PI; 
                 const r = SPHERE_RADIUS + 0.05;
                 v.pin.position.set(
@@ -161,15 +194,13 @@
                     r * Math.sin(phi) * Math.sin(theta)
                 );
             } else {
-                // ドーナツ：南北の計算を反転
-                // v=1(北)のとき、y座標がプラス(断面の上側)になるように phi の符号を調整
                 const phi = (v_coord - 0.5) * Math.PI * 2; 
                 const R = TORUS_MAJOR_RADIUS;
                 const r = TORUS_MINOR_RADIUS + 0.05;
 
                 v.pin.position.set(
                     (R + r * Math.cos(phi)) * Math.cos(theta),
-                    r * Math.sin(phi), // ここが北緯・南緯の高さ。v_coord=1なら正、v_coord=0なら負。
+                    r * Math.sin(phi),
                     (R + r * Math.cos(phi)) * Math.sin(theta)
                 );
             }
