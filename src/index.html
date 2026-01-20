@@ -2,21 +2,22 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>rpg-world-mapper v4.8</title>
+    <title>rpg-world-mapper v5.4</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; display: flex; }
-        #ui { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 8px; z-index: 100; width: 280px; border: 1px solid #444; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; display: flex; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 8px; z-index: 100; width: 300px; border: 1px solid #444; }
         .view-container { width: 50vw; height: 100vh; position: relative; border-right: 1px solid #333; }
         .label { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); color: #4fc3f7; background: rgba(0,0,0,0.6); padding: 8px 20px; border-radius: 20px; pointer-events: none; font-weight: bold; border: 1px solid #4fc3f7; text-transform: uppercase; }
-        input[type="file"] { width: 100%; margin-top: 10px; cursor: pointer; }
+        input[type="file"] { width: 100%; margin-top: 10px; cursor: pointer; color: #ccc; }
+        .instruction { font-size: 11px; color: #aaa; margin-top: 10px; line-height: 1.5; white-space: pre-wrap; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <h2 style="margin:0; font-size: 16px;">RPG WORLD MAPPER v4.8</h2>
+    <h2 style="margin:0; font-size: 16px;">RPG WORLD MAPPER v5.4</h2>
     <input type="file" id="fileInput" accept="image/*">
-    <div style="font-size: 11px; color: #888; margin-top: 10px;">鏡写しと上下逆転を完全に解消しました。</div>
+    <div class="instruction">もし地球の南北が古のJRPGの様につながっていたら。もしくは古のJRPGが地球と同じ球体だったら。</div>
 </div>
 
 <div id="view1" class="view-container"><div class="label">Sphere</div></div>
@@ -42,6 +43,7 @@
     let views = [];
     let lastUV = { u: 0.5, v: 0.5 };
     let commonTexture;
+    let activeController = null;
     const textureLoader = new THREE.TextureLoader();
     const earthMapUrl = './earth.jpg';
 
@@ -95,7 +97,7 @@
             let u = uvAttr.getX(i);
             let v = uvAttr.getY(i);
             if (isTorus) {
-                // v軸（南北）を反転させ、かつ0.5オフセットして赤道を外側へ
+                // 表示上の南北を正しく。v=1を上（穴の内側上）に。
                 v = 1 - ((v + 0.5) % 1.0); 
             }
             uvAttr.setXY(i, u, v);
@@ -107,8 +109,7 @@
             mesh.rotation.x = Math.PI / 2;
             mesh.rotation.z = -Math.PI / 2;
         } else {
-            // 球体の鏡写し（Mirror）を解消するためにX軸を反転
-            mesh.scale.x = -1;
+            mesh.scale.x = -1; 
             mesh.rotation.y = Math.PI / 2;
         }
         scene.add(mesh);
@@ -121,6 +122,8 @@
         scene.add(pin);
 
         const controls = new OrbitControls(camera, renderer.domElement);
+        controls.addEventListener('start', () => { activeController = view; });
+        
         const view = { scene, camera, renderer, mesh, pin, isTorus, controls };
         views.push(view);
 
@@ -146,10 +149,10 @@
     function updateAllPins() {
         views.forEach(v => {
             const { u, v: v_coord } = lastUV;
+            const theta = (u * Math.PI * 2) - Math.PI / 2;
 
             if (!v.isTorus) {
-                // 球体：Scale.x = -1 に合わせ、thetaの方向を調整
-                const theta = (u * Math.PI * 2) - Math.PI / 2;
+                // 球体：v=1(北)がy正方向
                 const phi = (1 - v_coord) * Math.PI; 
                 const r = SPHERE_RADIUS + 0.05;
                 v.pin.position.set(
@@ -158,17 +161,15 @@
                     r * Math.sin(phi) * Math.sin(theta)
                 );
             } else {
-                // ドーナツ：修正されたv軸ロジックに同期
-                const theta = u * Math.PI * 2 - Math.PI / 2;
-                // v=1(北) -> phi = -PI/2 (穴の上縁)
-                // v=0(南) -> phi = PI/2 (穴の下縁)
-                const phi = (0.5 - v_coord) * Math.PI * 2; 
+                // ドーナツ：南北の計算を反転
+                // v=1(北)のとき、y座標がプラス(断面の上側)になるように phi の符号を調整
+                const phi = (v_coord - 0.5) * Math.PI * 2; 
                 const R = TORUS_MAJOR_RADIUS;
                 const r = TORUS_MINOR_RADIUS + 0.05;
-                
+
                 v.pin.position.set(
                     (R + r * Math.cos(phi)) * Math.cos(theta),
-                    r * Math.sin(phi),
+                    r * Math.sin(phi), // ここが北緯・南緯の高さ。v_coord=1なら正、v_coord=0なら負。
                     (R + r * Math.cos(phi)) * Math.sin(theta)
                 );
             }
@@ -178,14 +179,16 @@
 
     function animate() {
         requestAnimationFrame(animate);
-        views.forEach((v, idx) => {
-            const other = views[1 - idx];
-            if (v.controls.enabled) {
-                other.camera.position.copy(v.camera.position);
-                other.camera.quaternion.copy(v.camera.quaternion);
-                other.controls.target.copy(v.controls.target);
-                other.controls.update();
+        if (activeController) {
+            const otherView = views.find(v => v !== activeController);
+            if (otherView) {
+                otherView.camera.position.copy(activeController.camera.position);
+                otherView.camera.quaternion.copy(activeController.camera.quaternion);
+                otherView.controls.target.copy(activeController.controls.target);
+                otherView.controls.update();
             }
+        }
+        views.forEach(v => {
             v.renderer.render(v.scene, v.camera);
         });
     }
