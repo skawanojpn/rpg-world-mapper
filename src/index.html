@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>rpg-world-mapper v4.8</title>
+    <title>rpg-world-mapper v4.9</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; display: flex; }
         #ui { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 8px; z-index: 100; width: 280px; border: 1px solid #444; }
@@ -14,9 +14,9 @@
 <body>
 
 <div id="ui">
-    <h2 style="margin:0; font-size: 16px;">RPG WORLD MAPPER v4.8</h2>
+    <h2 style="margin:0; font-size: 16px;">RPG WORLD MAPPER v4.9</h2>
     <input type="file" id="fileInput" accept="image/*">
-    <div style="font-size: 11px; color: #888; margin-top: 10px;">鏡写しと上下逆転を完全に解消しました。</div>
+    <div style="font-size: 11px; color: #888; margin-top: 10px;">北緯・南緯の同期ズレを完全に修正しました。</div>
 </div>
 
 <div id="view1" class="view-container"><div class="label">Sphere</div></div>
@@ -95,7 +95,7 @@
             let u = uvAttr.getX(i);
             let v = uvAttr.getY(i);
             if (isTorus) {
-                // v軸（南北）を反転させ、かつ0.5オフセットして赤道を外側へ
+                // v=1(北) -> 穴の内側上, v=0(南) -> 穴の内側下, v=0.5(赤道) -> 外周
                 v = 1 - ((v + 0.5) % 1.0); 
             }
             uvAttr.setXY(i, u, v);
@@ -107,7 +107,7 @@
             mesh.rotation.x = Math.PI / 2;
             mesh.rotation.z = -Math.PI / 2;
         } else {
-            // 球体の鏡写し（Mirror）を解消するためにX軸を反転
+            // 球体は鏡写し解消のためスケール反転
             mesh.scale.x = -1;
             mesh.rotation.y = Math.PI / 2;
         }
@@ -148,20 +148,21 @@
             const { u, v: v_coord } = lastUV;
 
             if (!v.isTorus) {
-                // 球体：Scale.x = -1 に合わせ、thetaの方向を調整
+                // 球体の座標計算 (スケール反転を考慮)
                 const theta = (u * Math.PI * 2) - Math.PI / 2;
+                // v=1(北)がy正方向, v=0(南)がy負方向になるようphiを計算
                 const phi = (1 - v_coord) * Math.PI; 
                 const r = SPHERE_RADIUS + 0.05;
                 v.pin.position.set(
                     r * Math.sin(phi) * Math.cos(theta),
-                    r * Math.cos(phi),
+                    r * Math.cos(phi), // ここで北緯・南緯のy座標を決定
                     r * Math.sin(phi) * Math.sin(theta)
                 );
             } else {
-                // ドーナツ：修正されたv軸ロジックに同期
+                // ドーナツの座標計算
                 const theta = u * Math.PI * 2 - Math.PI / 2;
-                // v=1(北) -> phi = -PI/2 (穴の上縁)
-                // v=0(南) -> phi = PI/2 (穴の下縁)
+                // 球体で上(北)をクリックした時(v=1)、phi = -PI/2 (ドーナツ穴の上側)
+                // 球体で下(南)をクリックした時(v=0)、phi = PI/2 (ドーナツ穴の下側)
                 const phi = (0.5 - v_coord) * Math.PI * 2; 
                 const R = TORUS_MAJOR_RADIUS;
                 const r = TORUS_MINOR_RADIUS + 0.05;
